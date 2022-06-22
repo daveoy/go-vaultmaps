@@ -6,7 +6,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -60,13 +62,30 @@ type SecretResponse struct {
 	Auth     interface{} `json:"auth"`
 }
 
+func LookupEnvOrString(key string, defaultVal string) string {
+	if val, ok := os.LookupEnv(key); ok {
+		return val
+	}
+	return defaultVal
+}
+
+func getConfig(fs *flag.FlagSet) []string {
+	cfg := make([]string, 0, 10)
+	fs.VisitAll(func(f *flag.Flag) {
+		cfg = append(cfg, fmt.Sprintf("%s:%q", f.Name, f.Value.String()))
+	})
+
+	return cfg
+}
+
 func main() {
 	// get cli args
-	var vaultAddress = flag.String("vault-address", "https://vault.ps.thmulti.com:8200", "vault address")
-	var githubToken = flag.String("github-token", "fake-token", "your github token")
-	var secretPath = flag.String("secret-path", "fake-path", "secret path")
-	var outputPath = flag.String("output-path", ".", "path to output file, default is .")
+	var vaultAddress = flag.String("vault-address", LookupEnvOrString("VAULT_ADDRESS", "https://vault.ps.thmulti.com:8200"), "vault address")
+	var githubToken = flag.String("github-token", LookupEnvOrString("GITHUB_TOKEN", "fake-token"), "your github token")
+	var secretPath = flag.String("secret-path", LookupEnvOrString("SECRET_PATH", "fake-path"), "secret path")
+	var outputPath = flag.String("output-path", LookupEnvOrString("OUTPUT_PATH", "."), "path to output file, default is .")
 	flag.Parse()
+	log.Printf("app.config %v\n", getConfig(flag.CommandLine))
 	// get a vault token
 	// set up client
 	httpclient := &http.Client{
@@ -80,17 +99,23 @@ func main() {
 		Token: *githubToken,
 	}
 	// encode in json
-	jsonBody, _ := json.Marshal(authRequestBody)
+	jsonBody, jsonError := json.Marshal(authRequestBody)
+	if jsonError != nil {
+		panic(jsonError)
+	}
 	// set up reqeust
 	tokenReq, _ := http.NewRequest(http.MethodPut, *vaultAddress+"/v1/auth/github/login", bytes.NewBuffer(jsonBody))
 	tokenReq.Header.Set("x-vault-request", "true")
 	// send request for token
-	tokenResp, tokenErr := httpclient.Do(tokenReq)
-	if tokenErr != nil {
-		panic(tokenErr)
+	tokenResp, tokenRespError := httpclient.Do(tokenReq)
+	if tokenRespError != nil {
+		panic(tokenRespError)
 	}
 	defer tokenResp.Body.Close()
-	tokenRespBody, _ := ioutil.ReadAll(tokenResp.Body) // response body is []byte
+	tokenRespBody, tokenRespBodyError := ioutil.ReadAll(tokenResp.Body) // response body is []byte
+	if tokenRespBodyError != nil {
+		panic(tokenRespBodyError)
+	}
 	// set up struct to unpack into
 	var tokenResponseJSON AuthResponse
 	// unpack
@@ -102,9 +127,15 @@ func main() {
 	secretReq.Header.Set("x-vault-token", vaultToken)
 	secretReq.Header.Set("x-vault-request", "true")
 	//	log.Printf("logging into %s with token %s to retreive key at %s", *vaultAddress, vaultToken, *secretPath)
-	secretResp, _ := httpclient.Do(secretReq)
+	secretResp, secretRespError := httpclient.Do(secretReq)
+	if secretRespError != nil {
+		panic(secretRespError)
+	}
 	defer secretResp.Body.Close()
-	secretRespBody, _ := ioutil.ReadAll(secretResp.Body) // response body is []byte
+	secretRespBody, secretRespBodyError := ioutil.ReadAll(secretResp.Body) // response body is []byte
+	if secretRespBodyError != nil {
+		panic(secretRespBodyError)
+	}
 	// set up struct to unpack into
 	var secretResponseJSON SecretResponse
 	// unpack

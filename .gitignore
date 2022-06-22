@@ -1,2 +1,4 @@
 # ignore any output from the binary
 *.yaml
+# ignore any env
+env
