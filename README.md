@@ -32,7 +32,7 @@ git clone this repo, cd into go-vaultmaps, then:
 go get -v "k8s.io/api/core/v1" \
 	 "k8s.io/apimachinery/pkg/apis/meta/v1" \
 	 "k8s.io/apimachinery/pkg/runtime/serializer/json"
-go build -o vaultmaps . && chmod +x vaultmaps
+go build -o vaultmaps vaultmaps.go && chmod +x vaultmaps
 ```
 
 ## docker

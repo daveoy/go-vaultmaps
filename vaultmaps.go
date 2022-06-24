@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	serializer "k8s.io/apimachinery/pkg/runtime/serializer/json"
@@ -140,11 +141,30 @@ func main() {
 	var secretResponseJSON SecretResponse
 	// unpack
 	json.Unmarshal(secretRespBody, &secretResponseJSON)
-	// extract secret to yaml
-	myYaml := make(map[string]string)
-	for _, val := range strings.Split(secretResponseJSON.Data.Data.HelmSecretValues, ",") {
-		values := strings.Split(val, "=")
-		myYaml[values[0]] = values[1]
+	// extract secret to a map
+	mySecrets := make(map[string]interface{})
+	for _, value := range strings.Split(secretResponseJSON.Data.Data.HelmSecretValues, ",") {
+		splitty := strings.Split(value, "=")
+		splittwo := strings.Split(splitty[0], ".")
+		var myvalue string
+		ptr := mySecrets
+		for index, val := range splittwo {
+			if _, ok := ptr[val]; !ok {
+				ptr[val] = map[string]interface{}{}
+			}
+			if index != len(splittwo)-1 {
+				// Advance the map pointer deeper into the map.
+				ptr = ptr[val].(map[string]interface{})
+			} else {
+				myvalue = val
+			}
+		}
+		// should have made all the nodes along the way by now
+		ptr[myvalue] = splitty[1]
+	}
+	myYaml, yErr := yaml.Marshal(mySecrets)
+	if yErr != nil {
+		fmt.Println("yaml error:", yErr)
 	}
 	s := strings.Split(*secretPath, "/")
 	var serviceName string
@@ -153,6 +173,7 @@ func main() {
 			serviceName = strings.Split(pathPart, "-")[1]
 		}
 	}
+	// create our configmap
 	cm := &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "ConfigMap",
@@ -162,8 +183,11 @@ func main() {
 			Name:      strings.ToLower(serviceName) + "-secure",
 			Namespace: strings.ToLower(serviceName),
 		},
-		Data: myYaml,
+		Data: map[string]string{
+			"values.yaml": string(myYaml),
+		},
 	}
+	// write it out
 	myFile, err := os.Create(*outputPath + "/" + strings.ToLower(serviceName) + ".yaml")
 	if err != nil {
 		panic(err)
@@ -173,4 +197,5 @@ func main() {
 	if serializerError != nil {
 		panic(serializerError)
 	}
+	// party
 }
