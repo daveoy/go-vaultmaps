@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -170,6 +171,23 @@ func getServiceName(secretPath string) string {
 	return "dy"
 }
 
+func encryptSecrets(path string) {
+	publicKey := "age1mn59crksy4luzytctr39u492jcdfvq005p4nunryqas03ckvp9tsx4ew40"
+	app := "sops"
+	args := []string{
+		"--age=" + publicKey,
+		"--encrypt",
+		"--encrypted-regex",
+		"^(data|password)$",
+		path,
+	}
+
+	cmd := exec.Command(app, args...)
+	cmd.Stdout, _ = os.OpenFile(path, os.O_RDWR, 0666)
+	fmt.Printf("cmd: %v\n", cmd)
+	cmd.Run()
+}
+
 func main() {
 	// get cli args
 	var vaultAddress = flag.String("vault-address", LookupEnvOrString("VAULT_ADDRESS", "https://vault.ps.thmulti.com:8200"), "vault address")
@@ -208,7 +226,7 @@ func main() {
 		},
 	}
 	// write it out
-	myFile, err := os.Create(*outputPath + "/" + strings.ToLower(serviceName) + ".yaml")
+	myFile, err := os.Create(*outputPath + "/" + strings.ToLower(serviceName) + "-secure.yaml")
 	if err != nil {
 		panic(err)
 	}
@@ -217,5 +235,6 @@ func main() {
 	if serializerError != nil {
 		panic(serializerError)
 	}
+	encryptSecrets(myFile.Name())
 	// party
 }
