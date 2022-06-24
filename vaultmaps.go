@@ -1,4 +1,3 @@
-// set VAULT_ADDR and VAULT_TOKEN at runtime to minimize  VCS issues here
 package main
 
 import (
@@ -79,25 +78,10 @@ func getConfig(fs *flag.FlagSet) []string {
 	return cfg
 }
 
-func main() {
-	// get cli args
-	var vaultAddress = flag.String("vault-address", LookupEnvOrString("VAULT_ADDRESS", "https://vault.ps.thmulti.com:8200"), "vault address")
-	var githubToken = flag.String("github-token", LookupEnvOrString("GITHUB_TOKEN", "fake-token"), "your github token")
-	var secretPath = flag.String("secret-path", LookupEnvOrString("SECRET_PATH", "fake-path"), "secret path")
-	var outputPath = flag.String("output-path", LookupEnvOrString("OUTPUT_PATH", "."), "path to output file, default is .")
-	flag.Parse()
-	log.Printf("app.config %v\n", getConfig(flag.CommandLine))
-	// get a vault token
-	// set up client
-	httpclient := &http.Client{
-		Timeout: 0,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
+func getVaultToken(githubToken string, httpclient http.Client, vaultAddress string) string {
 	// format our data
 	authRequestBody := &AuthRequestBody{
-		Token: *githubToken,
+		Token: githubToken,
 	}
 	// encode in json
 	jsonBody, jsonError := json.Marshal(authRequestBody)
@@ -105,7 +89,7 @@ func main() {
 		panic(jsonError)
 	}
 	// set up reqeust
-	tokenReq, _ := http.NewRequest(http.MethodPut, *vaultAddress+"/v1/auth/github/login", bytes.NewBuffer(jsonBody))
+	tokenReq, _ := http.NewRequest(http.MethodPut, vaultAddress+"/v1/auth/github/login", bytes.NewBuffer(jsonBody))
 	tokenReq.Header.Set("x-vault-request", "true")
 	// send request for token
 	tokenResp, tokenRespError := httpclient.Do(tokenReq)
@@ -122,9 +106,12 @@ func main() {
 	// unpack
 	json.Unmarshal(tokenRespBody, &tokenResponseJSON)
 	// extract token
-	vaultToken := tokenResponseJSON.Auth.ClientToken
+	return tokenResponseJSON.Auth.ClientToken
+}
+
+func getSecretValues(vaultToken string, httpclient http.Client, vaultAddress string, secretPath string) string {
 	// set up request for secrets
-	secretReq, _ := http.NewRequest(http.MethodGet, *vaultAddress+"/v1/"+*secretPath, bytes.NewBuffer(jsonBody))
+	secretReq, _ := http.NewRequest(http.MethodGet, vaultAddress+"/v1/"+secretPath, bytes.NewBuffer([]byte{}))
 	secretReq.Header.Set("x-vault-token", vaultToken)
 	secretReq.Header.Set("x-vault-request", "true")
 	//	log.Printf("logging into %s with token %s to retreive key at %s", *vaultAddress, vaultToken, *secretPath)
@@ -142,8 +129,12 @@ func main() {
 	// unpack
 	json.Unmarshal(secretRespBody, &secretResponseJSON)
 	// extract secret to a map
+	return secretResponseJSON.Data.Data.HelmSecretValues
+}
+
+func secretsToYaml(helmSecretValues string) []byte {
 	mySecrets := make(map[string]interface{})
-	for _, value := range strings.Split(secretResponseJSON.Data.Data.HelmSecretValues, ",") {
+	for _, value := range strings.Split(helmSecretValues, ",") {
 		splitty := strings.Split(value, "=")
 		splittwo := strings.Split(splitty[0], ".")
 		var myvalue string
@@ -166,13 +157,42 @@ func main() {
 	if yErr != nil {
 		fmt.Println("yaml error:", yErr)
 	}
-	s := strings.Split(*secretPath, "/")
-	var serviceName string
+	return myYaml
+}
+
+func getServiceName(secretPath string) string {
+	s := strings.Split(secretPath, "/")
 	for _, pathPart := range s {
 		if strings.Contains(pathPart, "service") {
-			serviceName = strings.Split(pathPart, "-")[1]
+			return strings.Split(pathPart, "-")[1]
 		}
 	}
+	return "dy"
+}
+
+func main() {
+	// get cli args
+	var vaultAddress = flag.String("vault-address", LookupEnvOrString("VAULT_ADDRESS", "https://vault.ps.thmulti.com:8200"), "vault address")
+	var githubToken = flag.String("github-token", LookupEnvOrString("GITHUB_TOKEN", "fake-token"), "your github token")
+	var secretPath = flag.String("secret-path", LookupEnvOrString("SECRET_PATH", "fake-path"), "secret path")
+	var outputPath = flag.String("output-path", LookupEnvOrString("OUTPUT_PATH", "."), "path to output file, default is .")
+	flag.Parse()
+	log.Printf("app.config %v\n", getConfig(flag.CommandLine))
+	// set up client
+	httpclient := &http.Client{
+		Timeout: 0,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	// get vault token
+	vaultToken := getVaultToken(*githubToken, *httpclient, *vaultAddress)
+	// get secrets
+	helmSecretValues := getSecretValues(vaultToken, *httpclient, *vaultAddress, *secretPath)
+	// format yaml
+	myYaml := secretsToYaml(helmSecretValues)
+	// get service name
+	serviceName := getServiceName(*secretPath)
 	// create our configmap
 	cm := &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{

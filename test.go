@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-func main() {
+func test() {
 	mystrings := "mysql.ro.password=fake-password,mysql.rw.password=fake-password" // pragma: whitelist-secret
 	myoutput := map[string]interface{}{}
 	for _, value := range strings.Split(mystrings, ",") {
